@@ -5,10 +5,13 @@
 """
 
 import json
+import re
+from datetime import datetime
 from functools import cache
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+LOG_DIR = Path(__file__).resolve().parent.parent / "learning_log"
 MAX_RESULTS = 3
 
 
@@ -77,3 +80,17 @@ def get_lecture_summary(lecture: int) -> str:
         available = sorted(p.stem for p in (DATA_DIR / "lectures").glob("*.md"))
         return f"第{lecture}回の要点はまだありません。用意されている回: {', '.join(available)}"
     return path.read_text(encoding="utf-8")
+
+
+def save_learning_log(title: str, content: str) -> str:
+    """学習の記録を learning_log/ フォルダに Markdown ファイルとして保存する。
+
+    利用者が「記録して」「保存して」のように頼んだときだけ使う。
+    title には記録の短い題名（例: "LoRAとQLoRAの違い"）、content には保存する本文を入れる。
+    """
+    LOG_DIR.mkdir(exist_ok=True)
+    # ファイル名に使えない文字や空白は「_」に置き換える
+    name = re.sub(r'[\\/:*?"<>|\s]+', "_", title).strip("_")[:40] or "log"
+    path = LOG_DIR / f"{datetime.now():%Y%m%d-%H%M%S}_{name}.md"
+    path.write_text(f"# {title}\n\n{content}\n", encoding="utf-8")
+    return f"{path.relative_to(LOG_DIR.parent)} に保存しました。"
