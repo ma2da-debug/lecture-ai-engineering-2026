@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import math
 import re
 import sqlite3
@@ -124,7 +125,10 @@ def open_index(path: Path):
         db.close()
 
 
-def search(query: str) -> list[dict]:
+RAG_NEIGHBORS = os.getenv("AIE_RAG_NEIGHBORS") == "1"
+
+
+def vector_search(query: str) -> list[dict]:
     """質問を埋め込み、近いページを最大RAG_TOP_K件返す。"""
     if not isinstance(query, str) or not query.strip():
         raise ValueError("検索語が空です。")
@@ -137,6 +141,26 @@ def search(query: str) -> list[dict]:
         """, (sqlite_vec.serialize_float32(vector), RAG_TOP_K))
         return [dict(row) for row in rows]
 
+
+def add_neighbor_pages(hits: list[dict]) -> list[dict]:
+    """各ヒットの前後1ページを足す。別資料はまたがず、同じページは重複させない。"""
+    index = {(p["document_id"], p["page"]): p for p in load_pages(RAG_SOURCE)}
+    seen = {hit["page_id"] for hit in hits}
+    results = []
+    for hit in hits:
+        results.append(hit)
+        for offset in (-1, 1):
+            neighbor = index.get((hit["document_id"], hit["page"] + offset))
+            if neighbor and neighbor["page_id"] not in seen:
+                seen.add(neighbor["page_id"])
+                results.append({**neighbor, "distance": None, "neighbor_of": hit["page_id"]})
+    return results
+
+
+def search(query: str) -> list[dict]:
+    """ベクトル検索。AIE_RAG_NEIGHBORS=1 のときは前後1ページも付ける。"""
+    hits = vector_search(query)
+    return add_neighbor_pages(hits) if RAG_NEIGHBORS else hits
 
 def search_graph(query: str) -> dict:
     """ベクトル検索を入口に、前後ページと共通用語で候補を広げる。"""
@@ -151,7 +175,7 @@ def search_graph(query: str) -> dict:
             adjacent[a].add(b)
             adjacent[b].add(a)
 
-    seeds = [hit for hit in search(query) if hit["page_id"] in pages][:min(GRAPH_START_K, GRAPH_MAX_RESULTS)]
+    seeds = [hit for hit in vector_search(query) if hit["page_id"] in pages][:min(GRAPH_START_K, GRAPH_MAX_RESULTS)]
     seed_ids = {seed["page_id"] for seed in seeds}
     results, candidates = [], {}
     for rank, seed in enumerate(seeds):
